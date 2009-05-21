@@ -87,19 +87,21 @@ module Delayed
         return nil # no work done
       end
 
-      begin
-        runtime =  Benchmark.realtime do
-          invoke_job # TODO: raise error if takes longer than max_run_time
-          destroy
-        end
-        # TODO: warn if runtime > max_run_time ?
-        logger.info "* [JOB] #{name} completed after %.4f" % runtime
-        return true  # did work
-      rescue Exception => e
-        reschedule e.message, e.backtrace
-        log_exception(e)
-        return false  # work failed
+      run_without_lock(worker_name)
+    end
+
+    # Try to run one job. Returns true/false (work done/work failed) or nil if job can't be locked.
+    def run_without_lock(worker_name)
+      runtime = Benchmark.realtime do
+        invoke_job # TODO: raise error if takes longer than max_run_time
+        destroy
       end
+      logger.info "* [JOB] #{name} completed after %.4f" % runtime
+      return true  # did work
+    rescue Exception => e
+      reschedule e.message, e.backtrace
+      log_exception(e)
+      return false  # work failed
     end
 
     # Add a job to the queue
@@ -143,6 +145,36 @@ module Delayed
       end
 
       records.sort_by { rand() }
+    end
+
+    # Claim a few candidate jobs to run.
+    def self.claim(limit = 5, max_run_time = MAX_RUN_TIME)
+      time_now = db_time_now
+
+      conditions = ['(run_at <= ? AND (locked_at IS NULL OR locked_at < ?) AND (locked_by != ?)) AND failed_at IS NULL', time_now, time_now - max_run_time, worker_name]
+
+      if min_priority
+        conditions[0] << ' AND (priority >= ?)'
+        conditions << min_priority
+      end
+
+      if max_priority
+        conditions[0] << ' AND (priority <= ?)'
+        conditions << max_priority
+      end
+
+      conditions.unshift(sql)
+
+      update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+      find(:all, :conditions => { :locked_at => time_now, :locked_by => worker_name })
+    end
+
+    # Run the next job we can get an exclusive lock on.
+    # If no jobs are left we return nil
+    def self.claim_and_run(limit = 5, max_run_time = MAX_RUN_TIME)
+      claim(limit, max_run_time).map do |job|
+        job.run_without_lock(worker_name)
+      end.all? || nil
     end
 
     # Run the next job we can get an exclusive lock on.
@@ -192,21 +224,16 @@ module Delayed
       logger.error(error)
     end
 
-    # Do num jobs and return stats on success/failure.
+    # Do num jobs in batches and return stats on success/failure.
     # Exit early if interrupted.
-    def self.work_off(num = 100)
+    def self.work_off(num = 100, batch_size = 10)
       success, failure = 0, 0
 
-      num.times do
-        case self.reserve_and_run_one_job
-        when true
-            success += 1
-        when false
-            failure += 1
-        else
-          break  # leave if no work could be done
-        end
-        break if $exit # leave if we're exiting
+      batch_size = [num, batch_size].min
+      (num / batch_size).times do
+        successes, failures = claim_and_run(batch_size)
+        break if $exit || (successes == 0 && failures == 0)
+        success += successes; failure += failures
       end
 
       return [success, failure]
