@@ -151,7 +151,7 @@ module Delayed
     def self.claim(limit = 5, max_run_time = MAX_RUN_TIME)
       time_now = db_time_now
 
-      conditions = ['(run_at <= ? AND (locked_at IS NULL OR locked_at < ?) AND (locked_by != ?)) AND failed_at IS NULL', time_now, time_now - max_run_time, worker_name]
+      conditions = [NextTaskSQL.dup, time_now, time_now - max_run_time, worker_name]
 
       if min_priority
         conditions[0] << ' AND (priority >= ?)'
@@ -163,10 +163,12 @@ module Delayed
         conditions << max_priority
       end
 
-      conditions.unshift(sql)
-
-      update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
-      find(:all, :conditions => { :locked_at => time_now, :locked_by => worker_name })
+      affected = update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+      if affected > 0
+        find(:all, :conditions => { :locked_at => time_now, :locked_by => worker_name })
+      else
+        []
+      end
     end
 
     # Run the next job we can get an exclusive lock on.
@@ -174,7 +176,7 @@ module Delayed
     def self.claim_and_run(limit = 5, max_run_time = MAX_RUN_TIME)
       claim(limit, max_run_time).map do |job|
         job.run_without_lock(worker_name)
-      end.all? || nil
+      end
     end
 
     # Run the next job we can get an exclusive lock on.
@@ -231,9 +233,11 @@ module Delayed
 
       batch_size = [num, batch_size].min
       (num / batch_size).times do
-        successes, failures = claim_and_run(batch_size)
-        break if $exit || (successes == 0 && failures == 0)
-        success += successes; failure += failures
+        results = claim_and_run(batch_size)
+        break if $exit || results.empty?
+        successes = results.count { |r| r }
+        success += successes
+        failure += results.size - successes
       end
 
       return [success, failure]
