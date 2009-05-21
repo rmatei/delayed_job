@@ -1,9 +1,8 @@
 $:.unshift(File.dirname(__FILE__) + '/../lib')
 $:.unshift(File.dirname(__FILE__) + '/../../rspec/lib')
 
-require 'rubygems'
 require 'active_record'
-gem 'sqlite3-ruby'
+require 'logger'
 
 require File.dirname(__FILE__) + '/../init'
 require 'spec'
@@ -25,6 +24,8 @@ ActiveRecord::Schema.define do
     table.datetime :failed_at
     table.timestamps
   end
+
+  add_index :delayed_jobs, [:locked_by, :locked_at, :failed_at, :run_at]
 
   create_table :stories, :force => true do |table|
     table.string :text
