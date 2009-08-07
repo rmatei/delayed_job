@@ -140,7 +140,8 @@ module Delayed
       conditions.unshift(sql)
 
       ActiveRecord::Base.silence do
-        find(:all, :conditions => conditions, :order => NextTaskOrder, :limit => limit)
+        # find(:all, :conditions => conditions, :order => NextTaskOrder, :limit => limit)
+        find(:all, :conditions => conditions, :limit => limit)
       end
     end
 
