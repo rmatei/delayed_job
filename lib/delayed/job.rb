@@ -16,7 +16,7 @@ module Delayed
     # If you want to keep them around (perhaps to inspect the reason
     # for the failure), set this to false.
     cattr_accessor :destroy_failed_jobs
-    self.destroy_failed_jobs = true
+    self.destroy_failed_jobs = false
 
     # Every worker has a unique name which by default is the pid of the process.
     # There are some advantages to overriding this with something which survives worker retarts:
