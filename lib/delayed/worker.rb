@@ -1,6 +1,6 @@
 module Delayed
   class Worker
-    SLEEP = 300
+    SLEEP = 5
 
     cattr_accessor :logger
     self.logger = if defined?(Merb::Logger)
