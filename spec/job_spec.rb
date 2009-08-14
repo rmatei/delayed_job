@@ -329,7 +329,7 @@ describe Delayed::Job do
       SimpleJob.runs.should == 0     
       @job.stub!(:lock_exclusively!).with(any_args).once.and_return(false)
       Delayed::Job.should_receive(:find_available).once.and_return([@job])
-      Delayed::Job.work_off(1)
+      Delayed::Job.reserve_and_run_one_job
       SimpleJob.runs.should == 0
     end
   

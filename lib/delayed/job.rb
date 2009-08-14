@@ -81,27 +81,31 @@ module Delayed
 
 
     # Try to run one job. Returns true/false (work done/work failed) or nil if job can't be locked.
-    def run_with_lock(max_run_time, worker_name)
-      logger.info "* [JOB] acquiring lock on #{name}"
-      unless lock_exclusively!(max_run_time, worker_name)
-        # We did not get the lock, some other worker process must have
-        logger.warn "* [JOB] failed to acquire exclusive lock for #{name}"
-        return nil # no work done
+    def run_without_lock(worker_name)
+      runtime = Benchmark.realtime do
+        invoke_job # TODO: raise error if takes longer than max_run_time
+        destroy
       end
+      logger.info "* [JOB] #{name} completed after %.4f" % runtime
+      return true  # did work
+    rescue Exception => e
+      reschedule e.message, e.backtrace
+      log_exception(e)
+      return false  # work failed
+    end
 
-      begin
-        runtime =  Benchmark.realtime do
-          Timeout.timeout(max_run_time.to_i) { invoke_job }
-          destroy
-        end
-        # TODO: warn if runtime > max_run_time ?
-        logger.info "* [JOB] #{name} completed after %.4f" % runtime
-        return true  # did work
-      rescue Exception => e
-        reschedule e.message, e.backtrace
-        log_exception(e)
-        return false  # work failed
+    # Add a job to the queue
+    def self.enqueue(*args, &block)
+      object = block_given? ? EvaledJob.new(&block) : args.shift
+
+      unless object.respond_to?(:perform) || block_given?
+        raise ArgumentError, 'Cannot enqueue items which do not respond to perform'
       end
+    
+      priority = args.first || 0
+      run_at   = args[1]
+
+      Job.create(:payload_object => object, :priority => priority.to_i, :run_at => run_at)
     end
 
     # Add a job to the queue
@@ -142,6 +146,38 @@ module Delayed
       ActiveRecord::Base.silence do
         # find(:all, :conditions => conditions, :order => NextTaskOrder, :limit => limit)
         find(:all, :conditions => conditions, :limit => limit)
+      end
+    end
+
+    # Claim a few candidate jobs to run.
+    def self.claim(limit = 5, max_run_time = MAX_RUN_TIME)
+      time_now = db_time_now
+
+      conditions = [NextTaskSQL.dup, time_now, time_now - max_run_time, worker_name]
+
+      if min_priority
+        conditions[0] << ' AND (priority >= ?)'
+        conditions << min_priority
+      end
+
+      if max_priority
+        conditions[0] << ' AND (priority <= ?)'
+        conditions << max_priority
+      end
+
+      affected = update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+      if affected > 0
+        find(:all, :conditions => { :locked_at => time_now, :locked_by => worker_name })
+      else
+        []
+      end
+    end
+
+    # Run the next job we can get an exclusive lock on.
+    # If no jobs are left we return nil
+    def self.claim_and_run(limit = 5, max_run_time = MAX_RUN_TIME)
+      claim(limit, max_run_time).map do |job|
+        job.run_without_lock(worker_name)
       end
     end
 
@@ -192,21 +228,18 @@ module Delayed
       logger.error(error)
     end
 
-    # Do num jobs and return stats on success/failure.
+    # Do num jobs in batches and return stats on success/failure.
     # Exit early if interrupted.
-    def self.work_off(num = 100)
+    def self.work_off(num = 100, batch_size = 10)
       success, failure = 0, 0
 
-      num.times do
-        case self.reserve_and_run_one_job
-        when true
-            success += 1
-        when false
-            failure += 1
-        else
-          break  # leave if no work could be done
-        end
-        break if $exit # leave if we're exiting
+      batch_size = [num, batch_size].min
+      (num / batch_size).times do
+        results = claim_and_run(batch_size)
+        break if $exit || results.empty?
+        successes = results.count { |r| r }
+        success += successes
+        failure += results.size - successes
       end
 
       return [success, failure]
