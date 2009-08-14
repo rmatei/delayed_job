@@ -9,7 +9,7 @@ module Delayed
   # Contains the work object as a YAML field.
   class Job < ActiveRecord::Base
     MAX_ATTEMPTS = 25
-    MAX_RUN_TIME = 4.hours
+    MAX_RUN_TIME = 15.minutes
     set_table_name :delayed_jobs
 
     # By default failed jobs are destroyed after too many attempts.
@@ -230,7 +230,7 @@ module Delayed
 
     # Do num jobs in batches and return stats on success/failure.
     # Exit early if interrupted.
-    def self.work_off(num = 100, batch_size = 10)
+    def self.work_off(num = 100, batch_size = 100)
       success, failure = 0, 0
 
       batch_size = [num, batch_size].min
