@@ -171,8 +171,8 @@ module Delayed
         conditions << max_priority
       end
       
-      time("locking #{limit} jobs", 0.1) do  
-        affected = update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+      affected = time("locking #{limit} jobs", 0.1) do  
+        update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
       end
       if affected > 0
         time("finding locked jobs", 0.1) do  
