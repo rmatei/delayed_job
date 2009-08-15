@@ -83,13 +83,19 @@ module Delayed
     # Try to run one job. Returns true/false (work done/work failed) or nil if job can't be locked.
     def run_without_lock(worker_name)
       runtime = Benchmark.realtime do
-        invoke_job # TODO: raise error if takes longer than max_run_time
-        destroy
+        time("runnning job", 0.1) do  
+          invoke_job # TODO: raise error if takes longer than max_run_time
+        end
+        time("destroying job", 0.1) do  
+          destroy
+        end
       end
       logger.info "* [JOB] #{name} completed after %.4f" % runtime
       return true  # did work
     rescue Exception => e
-      reschedule e.message, e.backtrace
+      time("rescheduling job", 0.1) do  
+        reschedule e.message, e.backtrace
+      end
       log_exception(e)
       return false  # work failed
     end
@@ -164,10 +170,14 @@ module Delayed
         conditions[0] << ' AND (priority <= ?)'
         conditions << max_priority
       end
-
-      affected = update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+      
+      time("locking #{limit} jobs", 0.1) do  
+        affected = update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+      end
       if affected > 0
-        find(:all, :conditions => { :locked_at => time_now, :locked_by => worker_name })
+        time("finding locked jobs", 0.1) do  
+          find(:all, :conditions => { :locked_at => time_now, :locked_by => worker_name })
+        end
       else
         []
       end

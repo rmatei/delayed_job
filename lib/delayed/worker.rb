@@ -33,7 +33,9 @@ module Delayed
         break if $exit
 
         if count.zero?
-          sleep(SLEEP)
+          time("sleeping", 0.1) do  
+            sleep(SLEEP)
+          end
         else
           say "#{count} jobs processed at %.4f j/s, %d failed ..." % [count / realtime, result.last]
         end
