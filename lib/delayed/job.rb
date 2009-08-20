@@ -172,7 +172,14 @@ module Delayed
       end
       
       affected = time("locking #{limit} jobs", 0.1) do  
-        update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+        begin
+          update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+        rescue Mysql::Error => e
+          logger.error e.message
+          @tries = @tries + 1 rescue 1
+          sleep 1
+          retry if @tries <= 5
+        end
       end
       if affected > 0
         time("finding locked jobs", 0.1) do  
@@ -240,7 +247,7 @@ module Delayed
 
     # Do num jobs in batches and return stats on success/failure.
     # Exit early if interrupted.
-    def self.work_off(num = 100, batch_size = 100)
+    def self.work_off(num = 100, batch_size = 25)
       success, failure = 0, 0
 
       batch_size = [num, batch_size].min
