@@ -254,7 +254,7 @@ module Delayed
       (num / batch_size).times do
         results = claim_and_run(batch_size)
         break if $exit || results.empty?
-        successes = results.count { |r| r }
+        successes = results.select { |r| r }.size
         success += successes
         failure += results.size - successes
       end
