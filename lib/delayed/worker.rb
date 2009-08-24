@@ -17,7 +17,6 @@ module Delayed
 
     def start
       say "*** Starting job worker #{Delayed::Job.worker_name}"
-      Delayed::Worker.divert_logging
 
       trap('TERM') { say 'Exiting...'; $exit = true }
       trap('INT')  { say 'Exiting...'; $exit = true }
@@ -51,15 +50,6 @@ module Delayed
     def say(text)
       puts text unless @quiet
       logger.info text if logger
-    end
-
-    # Make the workers spit out to log/dj_production.log
-    def self.divert_logging
-      const_set("RAILS_DEFAULT_LOGGER", ActiveSupport::BufferedLogger.new(File.join(Rails.root, 'log', "dj_#{Rails.env}.log")))
-      RAILS_DEFAULT_LOGGER.level = ActiveSupport::BufferedLogger.const_get(Rails.configuration.log_level.to_s.upcase)
-      RAILS_DEFAULT_LOGGER.auto_flushing = false if Rails.env.production?
-      ActiveRecord::Base.logger = RAILS_DEFAULT_LOGGER
-      ActiveRecord::Base.clear_active_connections!
     end
     
   end
