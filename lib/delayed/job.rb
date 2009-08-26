@@ -174,11 +174,15 @@ module Delayed
       affected = time("locking #{limit} jobs", 0.1) do  
         begin
           update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
-        rescue Mysql::Error => e
+        rescue Exception => e
           logger.error e.message
           @tries = @tries + 1 rescue 1
-          sleep 1
-          retry if @tries <= 5
+          sleep 1 
+          if @tries <= 5
+            puts "Retrying locking of jobs (#{e.message})..."
+            retry
+          end
+          0
         end
       end
       if affected > 0
