@@ -28,20 +28,22 @@ namespace :dj do
       time_to_pull_jobs = Time.current - start_time    
       puts "#{time_to_pull_jobs.round(1)} sec. to query available jobs"
       
-      # Figure out how long it'll take to burn through queue
-      if ready_to_run > 1000
-        puts "\nCalculating throughput..."
-        sample_time = 10
-        time_start = Time.current
-        ready_to_run_1 = Delayed::Job.count(:conditions => ["run_at < ? or run_at is null", Time.current.utc])
-        seconds_for_query = Time.current - time_start
-        sleep(sample_time - seconds_for_query)
-        ready_to_run_2 = Delayed::Job.count(:conditions => ["run_at < ? or run_at is null", Time.current.utc])
-        throughput_per_hour = (ready_to_run_1 - ready_to_run_2) * 3600 / sample_time
-        puts "#{total_jobs/throughput_per_hour} hours remaining (#{throughput_per_hour.with_commas} jobs/hour)"
-      end
-        
+      dj.status.throughput #if ready_to_run > 1000
     end
-
+    
+    desc "Show how many jobs we're burning per hour"
+    task :throughput => :environment do
+      puts "\nCalculating throughput..."
+      total_jobs = Delayed::Job.count
+      sample_time = 10
+      time_start = Time.current
+      ready_to_run_1 = Delayed::Job.count(:conditions => ["run_at < ? or run_at is null", Time.current.utc])
+      seconds_for_query = Time.current - time_start
+      sleep(sample_time - seconds_for_query)
+      ready_to_run_2 = Delayed::Job.count(:conditions => ["run_at < ? or run_at is null", Time.current.utc])
+      throughput_per_hour = (ready_to_run_1 - ready_to_run_2) * 3600 / sample_time
+      puts "Burning #{throughput_per_hour.with_commas} jobs/hour  (#{((ready_to_run_1-ready_to_run_2).to_f / sample_time).round} jobs/sec.)"
+      puts "#{total_jobs/throughput_per_hour} hours remaining to empty queue..."
+    end
   end
 end
