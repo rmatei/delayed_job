@@ -13,14 +13,14 @@ namespace :dj do
 
       total_jobs = Delayed::Job.count
       ready_to_run = Delayed::Job.count(:conditions => ["run_at < ? or run_at is null", Time.current.utc])
-      puts "#{ready_to_run}/#{total_jobs} jobs are ready to run"
+      puts "#{ready_to_run.with_commas} / #{total_jobs.with_commas} jobs are ready to run"
 
-      being_run = Delayed::Job.count(:conditions => ["locked_at > ?", 5.minutes.ago.utc])
-      puts "#{being_run} are being run"
+      # being_run = Delayed::Job.count(:conditions => ["locked_at > ?", 5.minutes.ago.utc])
+      # puts "#{being_run} locked recently"
     
       failed_jobs = Delayed::Job.count(:conditions => ["failed_at is not null"])
       jobs_with_failed_attempts = Delayed::Job.count(:conditions => ["attempts > 0"])
-      puts "#{failed_jobs} failed jobs; #{jobs_with_failed_attempts} with failed attempts"
+      puts "#{failed_jobs.with_commas} failed jobs; #{jobs_with_failed_attempts.with_commas} with failed attempts"
       puts "WARNING! destroying failed jobs" if Delayed::Job.destroy_failed_jobs
       
       start_time = Time.current
@@ -38,7 +38,7 @@ namespace :dj do
         sleep(sample_time - seconds_for_query)
         ready_to_run_2 = Delayed::Job.count(:conditions => ["run_at < ? or run_at is null", Time.current.utc])
         throughput_per_hour = (ready_to_run_1 - ready_to_run_2) * 3600 / sample_time
-        puts "#{total_jobs/throughput_per_hour} hours remaining (#{throughput_per_hour.round} jobs/hour)"
+        puts "#{total_jobs/throughput_per_hour} hours remaining (#{throughput_per_hour.with_commas} jobs/hour)"
       end
         
     end
