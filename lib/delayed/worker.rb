@@ -33,9 +33,7 @@ module Delayed
         break if $exit
 
         if count.zero?
-          time("sleeping", 0.1) do  
-            sleep(SLEEP)
-          end
+          sleep(SLEEP)
         else
           say "#{count} jobs processed at %.4f j/s, %d failed ..." % [count / realtime, result.last]
         end
@@ -51,6 +49,6 @@ module Delayed
       puts text unless @quiet
       logger.info text if logger
     end
-    
+
   end
 end
