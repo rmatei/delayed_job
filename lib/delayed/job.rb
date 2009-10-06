@@ -1,3 +1,5 @@
+require 'timeout'
+
 module Delayed
 
   class DeserializationError < StandardError
@@ -7,14 +9,14 @@ module Delayed
   # Contains the work object as a YAML field.
   class Job < ActiveRecord::Base
     MAX_ATTEMPTS = 25
-    MAX_RUN_TIME = 4.hours
+    MAX_RUN_TIME = 15.minutes
     set_table_name :delayed_jobs
 
     # By default failed jobs are destroyed after too many attempts.
     # If you want to keep them around (perhaps to inspect the reason
     # for the failure), set this to false.
     cattr_accessor :destroy_failed_jobs
-    self.destroy_failed_jobs = true
+    self.destroy_failed_jobs = false
 
     # Every worker has a unique name which by default is the pid of the process.
     # There are some advantages to overriding this with something which survives worker retarts:
@@ -79,27 +81,37 @@ module Delayed
 
 
     # Try to run one job. Returns true/false (work done/work failed) or nil if job can't be locked.
-    def run_with_lock(max_run_time, worker_name)
-      logger.info "* [JOB] aquiring lock on #{name}"
-      unless lock_exclusively!(max_run_time, worker_name)
-        # We did not get the lock, some other worker process must have
-        logger.warn "* [JOB] failed to aquire exclusive lock for #{name}"
-        return nil # no work done
-      end
-
-      begin
-        runtime =  Benchmark.realtime do
+    def run_without_lock(worker_name)
+      runtime = Benchmark.realtime do
+        time("runnning job", 0.1) do  
           invoke_job # TODO: raise error if takes longer than max_run_time
+        end
+        time("destroying job", 0.1) do  
           destroy
         end
-        # TODO: warn if runtime > max_run_time ?
-        logger.info "* [JOB] #{name} completed after %.4f" % runtime
-        return true  # did work
-      rescue Exception => e
-        reschedule e.message, e.backtrace
-        log_exception(e)
-        return false  # work failed
       end
+      logger.info "* [JOB] #{name} completed after %.4f" % runtime
+      return true  # did work
+    rescue Exception => e
+      time("rescheduling job", 0.1) do  
+        reschedule e.message, e.backtrace
+      end
+      log_exception(e)
+      return false  # work failed
+    end
+
+    # Add a job to the queue
+    def self.enqueue(*args, &block)
+      object = block_given? ? EvaledJob.new(&block) : args.shift
+
+      unless object.respond_to?(:perform) || block_given?
+        raise ArgumentError, 'Cannot enqueue items which do not respond to perform'
+      end
+    
+      priority = args.first || 0
+      run_at   = args[1]
+
+      Job.create(:payload_object => object, :priority => priority.to_i, :run_at => run_at)
     end
 
     # Add a job to the queue
@@ -117,7 +129,6 @@ module Delayed
     end
 
     # Find a few candidate jobs to run (in case some immediately get locked by others).
-    # Return in random order prevent everyone trying to do same head job at once.
     def self.find_available(limit = 5, max_run_time = MAX_RUN_TIME)
 
       time_now = db_time_now
@@ -138,11 +149,57 @@ module Delayed
 
       conditions.unshift(sql)
 
-      records = ActiveRecord::Base.silence do
-        find(:all, :conditions => conditions, :order => NextTaskOrder, :limit => limit)
+      ActiveRecord::Base.silence do
+        # find(:all, :conditions => conditions, :order => NextTaskOrder, :limit => limit)
+        find(:all, :conditions => conditions, :limit => limit)
+      end
+    end
+
+    # Claim a few candidate jobs to run.
+    def self.claim(limit = 5, max_run_time = MAX_RUN_TIME)
+      time_now = db_time_now
+
+      conditions = [NextTaskSQL.dup, time_now, time_now - max_run_time, worker_name]
+
+      if min_priority
+        conditions[0] << ' AND (priority >= ?)'
+        conditions << min_priority
       end
 
-      records.sort_by { rand() }
+      if max_priority
+        conditions[0] << ' AND (priority <= ?)'
+        conditions << max_priority
+      end
+      
+      affected = time("locking #{limit} jobs", 0.1) do  
+        begin
+          update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit)
+        rescue Exception => e
+          logger.error e.message
+          @tries = @tries + 1 rescue 1
+          sleep 1 
+          if @tries <= 5
+            puts "Retrying locking of jobs (#{e.message})..."
+            retry
+          end
+          0
+        end
+      end
+      if affected > 0
+        time("finding locked jobs", 0.1) do  
+          find(:all, :conditions => { :locked_at => time_now, :locked_by => worker_name })
+        end
+      else
+        []
+      end
+    end
+
+    # Run the next job we can get an exclusive lock on.
+    # If no jobs are left we return nil
+    def self.claim_and_run(limit = 5, max_run_time = MAX_RUN_TIME)
+      claim(limit, max_run_time).map do |job|
+        job.run_without_lock(worker_name)
+      end
     end
 
     # Run the next job we can get an exclusive lock on.
@@ -165,7 +222,7 @@ module Delayed
       now = self.class.db_time_now
       affected_rows = if locked_by != worker
         # We don't own this job so we will update the locked_by name and the locked_at
-        self.class.update_all(["locked_at = ?, locked_by = ?", now, worker], ["id = ? and (locked_at is null or locked_at < ?)", id, (now - max_run_time.to_i)])
+        self.class.update_all(["locked_at = ?, locked_by = ?", now, worker], ["id = ? and (locked_at is null or locked_at < ?) and (run_at <= ?)", id, (now - max_run_time.to_i), now])
       else
         # We already own this job, this may happen if the job queue crashes.
         # Simply resume and update the locked_at
@@ -192,21 +249,18 @@ module Delayed
       logger.error(error)
     end
 
-    # Do num jobs and return stats on success/failure.
+    # Do num jobs in batches and return stats on success/failure.
     # Exit early if interrupted.
-    def self.work_off(num = 100)
+    def self.work_off(num = 100, batch_size = 25)
       success, failure = 0, 0
 
-      num.times do
-        case self.reserve_and_run_one_job
-        when true
-            success += 1
-        when false
-            failure += 1
-        else
-          break  # leave if no work could be done
-        end
-        break if $exit # leave if we're exiting
+      batch_size = [num, batch_size].min
+      (num / batch_size).times do
+        results = claim_and_run(batch_size)
+        break if $exit || results.empty?
+        successes = results.select { |r| r }.size
+        success += successes
+        failure += results.size - successes
       end
 
       return [success, failure]
@@ -233,7 +287,7 @@ module Delayed
       return handler if handler.respond_to?(:perform)
 
       raise DeserializationError,
-        'Job failed to load: Unknown handler. Try to manually require the appropiate file.'
+        'Job failed to load: Unknown handler. Try to manually require the appropriate file.'
     rescue TypeError, LoadError, NameError => e
       raise DeserializationError,
         "Job failed to load: #{e.message}. Try to manually require the required file."
