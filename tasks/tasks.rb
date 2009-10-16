@@ -16,7 +16,7 @@ namespace :jobs do
     Delayed::Worker.logger = RAILS_DEFAULT_LOGGER
     ActiveRecord::Base.logger = RAILS_DEFAULT_LOGGER
     ActiveRecord::Base.clear_active_connections!
-    NewRelic::Agent.manual_start :app_name => "#{Template.current.code.humanize} DJ worker"
+    NewRelic::Agent.manual_start :app_name => "#{Template.current.code.titleize} DJ worker"
     Delayed::Worker.new(:min_priority => ENV['MIN_PRIORITY'], :max_priority => ENV['MAX_PRIORITY']).start
   end
 end
