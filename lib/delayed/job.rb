@@ -1,4 +1,5 @@
 require 'timeout'
+require "#{RAILS_ROOT}/vendor/plugins/rpm/init.rb"
 
 module Delayed
 
@@ -37,6 +38,7 @@ module Delayed
     def self.clear_locks!
       update_all("locked_by = null, locked_at = null", ["locked_by = ?", worker_name])
     end
+    self.metaclass.add_method_tracer :clear_locks!
 
     def failed?
       failed_at
@@ -78,6 +80,7 @@ module Delayed
         destroy_failed_jobs ? destroy : update_attribute(:failed_at, Time.now)
       end
     end
+    add_method_tracer :reschedule
 
 
     # Try to run one job. Returns true/false (work done/work failed) or nil if job can't be locked.
@@ -99,6 +102,7 @@ module Delayed
       log_exception(e)
       return false  # work failed
     end
+    add_method_tracer :run_without_lock
 
     # Add a job to the queue
     def self.enqueue(*args, &block)
@@ -113,20 +117,7 @@ module Delayed
 
       Job.create(:payload_object => object, :priority => priority.to_i, :run_at => run_at)
     end
-
-    # Add a job to the queue
-    def self.enqueue(*args, &block)
-      object = block_given? ? EvaledJob.new(&block) : args.shift
-
-      unless object.respond_to?(:perform) || block_given?
-        raise ArgumentError, 'Cannot enqueue items which do not respond to perform'
-      end
-    
-      priority = args.first || 0
-      run_at   = args[1]
-
-      Job.create(:payload_object => object, :priority => priority.to_i, :run_at => run_at)
-    end
+    self.metaclass.add_method_tracer :enqueue
 
     # Find a few candidate jobs to run (in case some immediately get locked by others).
     def self.find_available(limit = 5, max_run_time = MAX_RUN_TIME)
@@ -154,6 +145,7 @@ module Delayed
         find(:all, :conditions => conditions, :limit => limit)
       end
     end
+    self.metaclass.add_method_tracer :find_available
 
     # Claim a few candidate jobs to run.
     def self.claim(limit = 5, max_run_time = MAX_RUN_TIME)
@@ -193,6 +185,7 @@ module Delayed
         []
       end
     end
+    self.metaclass.add_method_tracer :claim
 
     # Run the next job we can get an exclusive lock on.
     # If no jobs are left we return nil
@@ -201,6 +194,7 @@ module Delayed
         job.run_without_lock(worker_name)
       end
     end
+    self.metaclass.add_method_tracer :claim_and_run
 
     # Run the next job we can get an exclusive lock on.
     # If no jobs are left we return nil
@@ -215,6 +209,7 @@ module Delayed
 
       nil # we didn't do any work, all 5 were not lockable
     end
+    self.metaclass.add_method_tracer :reserve_and_run_one_job
 
     # Lock this job for this worker.
     # Returns true if we have the lock, false otherwise.
@@ -236,6 +231,7 @@ module Delayed
         return false
       end
     end
+    add_method_tracer :lock_exclusively!
 
     # Unlock this job (note: not saved to DB)
     def unlock
@@ -265,11 +261,13 @@ module Delayed
 
       return [success, failure]
     end
+    self.metaclass.add_method_tracer :work_off
 
     # Moved into its own method so that new_relic can trace it.
     def invoke_job
       payload_object.perform
     end
+    add_method_tracer :invoke_job
 
   private
 
