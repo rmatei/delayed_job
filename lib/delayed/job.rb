@@ -261,14 +261,13 @@ module Delayed
 
       return [success, failure]
     end
-    self.metaclass.send :include, NewRelic::Agent::Instrumentation::ControllerInstrumentation
-    self.metaclass.add_transaction_tracer :work_off
 
     # Moved into its own method so that new_relic can trace it.
     def invoke_job
       payload_object.perform
     end
-    add_method_tracer :invoke_job
+    self.metaclass.send :include, NewRelic::Agent::Instrumentation::ControllerInstrumentation
+    self.metaclass.add_transaction_tracer :invoke_job
 
   private
 
