@@ -266,8 +266,8 @@ module Delayed
     def invoke_job
       payload_object.perform
     end
-    self.metaclass.send :include, NewRelic::Agent::Instrumentation::ControllerInstrumentation
-    self.metaclass.add_transaction_tracer :invoke_job
+    # self.metaclass.send :include, NewRelic::Agent::Instrumentation::ControllerInstrumentation
+    # self.metaclass.add_transaction_tracer :invoke_job
 
   private
 
