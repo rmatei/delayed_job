@@ -266,8 +266,6 @@ module Delayed
     def invoke_job
       payload_object.perform
     end
-    include NewRelic::Agent::Instrumentation::ControllerInstrumentation
-    add_transaction_tracer :invoke_job
 
   private
 
