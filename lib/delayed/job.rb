@@ -165,8 +165,10 @@ module Delayed
       
       affected = time("locking #{limit} jobs", 0.1) do  
         begin
-          offset = rand(200) * limit
-          update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], conditions, :limit => limit, :offset => offset)
+          offset = rand(1000) * limit
+          min_id = find(:first, :conditions => conditions, :offset => offset).id
+          new_conditions = [conditions.first + " AND id > ?"] + conditions.slice(1,99) + [min_id]
+          update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], new_conditions, :limit => limit)
         rescue Exception => e
           logger.error e.message
           @tries = @tries + 1 rescue 1
