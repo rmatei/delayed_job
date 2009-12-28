@@ -81,12 +81,6 @@ module Delayed
       end
     end
     add_method_tracer :reschedule
-    
-    def reschedule_without_error(time)
-      self.run_at = time
-      self.unlock
-      save!      
-    end
 
 
     # Try to run one job. Returns true/false (work done/work failed) or nil if job can't be locked.
@@ -95,10 +89,8 @@ module Delayed
         time("runnning job", 0.1) do  
           invoke_job # TODO: raise error if takes longer than max_run_time
         end
-        if payload_object.run_at and payload_object.run_at > Time.current # Job rescheduled itself, do not destroy
-          time("rescheduling job", 0.1) { reschedule_without_error(payload_object.run_at) }
-        else
-          time("destroying job", 0.1) { destroy }
+        time("destroying job", 0.1) do  
+          destroy
         end
       end
       logger.info "* [JOB] #{name} completed after %.4f" % runtime
@@ -173,8 +165,8 @@ module Delayed
       
       affected = time("locking #{limit} jobs", 0.1) do  
         begin
-          min_id = (find(:first, :offset => (rand(60) * limit)) || first).id
-          new_conditions = [conditions.first + " AND id >= ?"] + conditions.slice(1,99) + [min_id]
+          min_id = find(:first, :offset => (rand(60) * limit)).id
+          new_conditions = [conditions.first + " AND id > ?"] + conditions.slice(1,99) + [min_id]
           update_all(["locked_at = ?, locked_by = ?", time_now, worker_name], new_conditions, :limit => limit)
         rescue Exception => e
           logger.error e.message
